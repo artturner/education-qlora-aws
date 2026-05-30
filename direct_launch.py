@@ -13,11 +13,11 @@ load_dotenv()
 
 # ── CONFIG ────────────────────────────────────────────────────────
 ROLE_ARN    = "arn:aws:iam::730335300762:role/sagemaker_edu_qlora-role"
-BUCKET      = "sagemaker-us-east-1-730335300762"
+BUCKET = "sagemaker-us-east-1-730335300762"
 REGION      = "us-east-1"
 HF_TOKEN    = os.environ["HF_TOKEN"]
 JOB_NAME    = f"edu-qlora-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-IMAGE_URI   = "763104351884.dkr.ecr.us-east-1.amazonaws.com/huggingface-pytorch-training:2.8.0-transformers4.56.2-gpu-py312-cu128-ubuntu22.04"
+IMAGE_URI = "763104351884.dkr.ecr.us-east-1.amazonaws.com/huggingface-pytorch-training:2.8.0-transformers4.56.2-gpu-py312-cu129-ubuntu22.04"
 # ──────────────────────────────────────────────────────────────────
 
 def upload_source():
@@ -68,7 +68,7 @@ def submit_job(source_uri):
             "InstanceCount":  1,
             "VolumeSizeInGB": 30,
         },
-        StoppingCondition={"MaxRuntimeInSeconds": 7200, "MaxWaitTimeInSeconds": 10800},
+        StoppingCondition={"MaxRuntimeInSeconds": 7200,"MaxWaitTimeInSeconds": 10800,},
         EnableManagedSpotTraining=True,
         CheckpointConfig={"S3Uri": f"s3://{BUCKET}/checkpoints/{JOB_NAME}/"},
         Environment={
