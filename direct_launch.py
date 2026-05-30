@@ -21,20 +21,20 @@ IMAGE_URI = "763104351884.dkr.ecr.us-east-1.amazonaws.com/huggingface-pytorch-tr
 # ──────────────────────────────────────────────────────────────────
 
 def upload_source():
-    """Package train.py + requirements.txt and upload to S3."""
     tarball = "sourcedir.tar.gz"
+
     with tarfile.open(tarball, "w:gz") as tar:
-        tar.add("train.py")
-        tar.add("requirements.txt")
+        tar.add("train.py", arcname="train.py")
+        tar.add("requirements.txt", arcname="requirements.txt")
 
     s3_key = f"source/{JOB_NAME}/sourcedir.tar.gz"
     s3 = boto3.client("s3", region_name=REGION)
     s3.upload_file(tarball, BUCKET, s3_key)
     os.remove(tarball)
 
-    s3_prefix = f"s3://{BUCKET}/source/{JOB_NAME}"
-    print(f"Source uploaded: {s3_prefix}/sourcedir.tar.gz")
-    return s3_prefix  # return directory, not file path
+    source_uri = f"s3://{BUCKET}/{s3_key}"
+    print(f"Source uploaded: {source_uri}")
+    return source_uri
 
 def submit_job(source_uri):
     sm = boto3.client("sagemaker", region_name=REGION)
