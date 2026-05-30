@@ -32,9 +32,9 @@ def upload_source():
     s3.upload_file(tarball, BUCKET, s3_key)
     os.remove(tarball)
 
-    uri = f"s3://{BUCKET}/{s3_key}"
-    print(f"Source uploaded: {uri}")
-    return uri
+    s3_prefix = f"s3://{BUCKET}/source/{JOB_NAME}"
+    print(f"Source uploaded: {s3_prefix}/sourcedir.tar.gz")
+    return s3_prefix  # return directory, not file path
 
 def submit_job(source_uri):
     sm = boto3.client("sagemaker", region_name=REGION)
@@ -73,7 +73,7 @@ def submit_job(source_uri):
         CheckpointConfig={"S3Uri": f"s3://{BUCKET}/checkpoints/{JOB_NAME}/"},
         Environment={
             "HF_TOKEN":                    HF_TOKEN,
-            "SAGEMAKER_SUBMIT_DIRECTORY":  source_uri,
+            "SAGEMAKER_SUBMIT_DIRECTORY":  source_uri,  #now s3://bucket/source/job-name
             "SAGEMAKER_PROGRAM":           "train.py",
         },
     )
