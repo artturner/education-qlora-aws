@@ -101,9 +101,9 @@ def get_training_args(output_dir):
         eval_strategy="no",
         bf16=True,
         seed=42,
-        optim="paged_adamw_32bit",
+        optim="adamw_bnb_8bit",
         group_by_length=True,
-        gradient_checkpointing=True,
+        gradient_checkpointing=False,
         dataset_text_field="instruction",
         packing=True,
     )
