@@ -17,10 +17,25 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     TrainingArguments,
+    BitsAndBytesConfig,
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTTrainer, SFTConfig
 from datasets import load_dataset
+
+
+# ── Quantization config ────────────────────────────────────────────────────────
+def get_bnb_config():
+    # load_in_4bit: loads base model in 4-bit precision, reducing VRAM usage.
+    # nf4: NormalFloat4 quantization — better than int4 for LLMs.
+    # double_quant: quantizes the quantization constants for extra savings.
+    # compute_dtype: stays in bfloat16 for stable training arithmetic.
+    return BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16,
+    )
 
 
 # ── LoRA config ────────────────────────────────────────────────────────────────
@@ -44,19 +59,29 @@ def get_lora_config():
 
 
 # ── Model and tokenizer ────────────────────────────────────────────────────────
-def load_model_and_tokenizer(model_id, hf_token=""):
+def load_model_and_tokenizer(model_id, bnb_config, hf_token=""):
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         token=hf_token,
+        quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
+
+    # prepare_model_for_kbit_training enables gradient checkpointing and
+    # casts layer norms to float32 — both required for stable QLoRA training.
+    model = prepare_model_for_kbit_training(model)
+
     tokenizer = AutoTokenizer.from_pretrained(
         model_id, token=hf_token, trust_remote_code=True
     )
+
+    # Phi-3 has no native pad token — use eos_token.
+    # padding_side="right" prevents attention mask warnings during training.
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
+
     return model, tokenizer
 
 
@@ -76,7 +101,7 @@ def get_training_args(output_dir):
         eval_strategy="no",
         bf16=True,
         seed=42,
-        optim="adamw_torch",
+        optim="adamw_bnb_8bit",
         group_by_length=True,
         gradient_checkpointing=False,
         dataset_text_field="instruction",
@@ -109,11 +134,12 @@ def main():
     print(f"Eval path:      {eval_data_path}", flush=True)
     print(f"Output dir:     {output_dir}", flush=True)
 
+    bnb_config  = get_bnb_config()
     lora_config = get_lora_config()
 
     try:
         print("Loading model...", flush=True)
-        model, tokenizer = load_model_and_tokenizer(model_id, hf_token)
+        model, tokenizer = load_model_and_tokenizer(model_id, bnb_config, hf_token)
         print("Model loaded!", flush=True)
     except Exception as e:
         print(f"MODEL LOAD FAILED: {e}", flush=True)
