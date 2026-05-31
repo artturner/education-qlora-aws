@@ -79,7 +79,7 @@ def get_training_args(output_dir):
         optim="adamw_torch",
         group_by_length=True,
         gradient_checkpointing=False,
-        dataset_text_field="instruction",
+        dataset_text_field="text",
         packing=True,
     )
 

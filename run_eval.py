@@ -20,7 +20,7 @@ BUCKET     = "sagemaker-us-east-1-730335300762"
 REGION     = "us-east-1"
 HF_TOKEN   = os.environ["HF_TOKEN"]
 
-MODEL_S3_URI = "s3://sagemaker-us-east-1-730335300762/output/edu-qlora-20260531-183243/output/model.tar.gz"
+MODEL_S3_URI = "s3://sagemaker-us-east-1-730335300762/output/edu-qlora-20260531-200258/output/model.tar.gz"
 EVAL_S3_URI  = "s3://edu-qlora-art/edu-lora-dataset/eval.jsonl"
 
 IMAGE_URI  = "763104351884.dkr.ecr.us-east-1.amazonaws.com/huggingface-pytorch-training:2.8.0-transformers4.56.2-gpu-py312-cu129-ubuntu22.04"
