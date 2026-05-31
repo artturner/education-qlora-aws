@@ -98,7 +98,7 @@ def get_training_args(output_dir):
         lr_scheduler_type="cosine",
         logging_steps=10,
         save_strategy="epoch",
-        eval_strategy="epoch",
+        eval_strategy="no",
         bf16=True,
         seed=42,
         optim="paged_adamw_32bit",
@@ -115,8 +115,8 @@ def main():
 
     print("=== MAIN STARTED ===", flush=True)
 
-    model_id = "microsoft/Phi-3-mini-4k-instruct"
-    # model_id = "meta-llama/Llama-3.2-1B-Instruct"  # uncomment when access granted
+    # model_id = "microsoft/Phi-3-mini-4k-instruct"
+    model_id = "meta-llama/Llama-3.2-1B-Instruct"
 
     output_dir      = os.environ.get("SM_MODEL_DIR",     "/opt/ml/model")
     train_data_path = os.path.join(
@@ -160,7 +160,6 @@ def main():
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
         processing_class=tokenizer,
     )
 
