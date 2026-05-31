@@ -21,20 +21,11 @@ IMAGE_URI = "763104351884.dkr.ecr.us-east-1.amazonaws.com/huggingface-pytorch-tr
 # ──────────────────────────────────────────────────────────────────
 
 def upload_source():
-    tarball = "sourcedir.tar.gz"
-
-    with tarfile.open(tarball, "w:gz") as tar:
-        tar.add("train.py", arcname="train.py")
-        tar.add("requirements.txt", arcname="requirements.txt")
-
-    s3_key = f"source/{JOB_NAME}/sourcedir.tar.gz"
     s3 = boto3.client("s3", region_name=REGION)
-    s3.upload_file(tarball, BUCKET, s3_key)
-    os.remove(tarball)
-
-    source_uri = f"s3://{BUCKET}/{s3_key}"
-    print(f"Source uploaded: {source_uri}")
-    return source_uri
+    for f in ["train.py", "requirements.txt"]:
+        s3.upload_file(f, BUCKET, f"source/{JOB_NAME}/{f}")
+        print(f"Uploaded: {f}")
+    return f"s3://{BUCKET}/source/{JOB_NAME}/"
 
 def submit_job(source_uri):
     sm = boto3.client("sagemaker", region_name=REGION)
@@ -44,9 +35,22 @@ def submit_job(source_uri):
         AlgorithmSpecification={
             "TrainingImage":     IMAGE_URI,
             "TrainingInputMode": "File",
+            "ContainerEntrypoint": [
+                "/bin/bash", "-c",
+                "pip install -r /opt/ml/input/data/code/requirements.txt && echo '=== Files in code dir ===' && ls /opt/ml/input/data/code/ && echo '=== Starting train.py ===' && python -u /opt/ml/input/data/code/train.py 2>&1 && echo '=== Training complete ==='"
+             ],
         },
         RoleArn=ROLE_ARN,
         InputDataConfig=[
+            {
+                "ChannelName": "code",
+                "DataSource": {"S3DataSource": {
+                    "S3DataType": "S3Prefix",
+                    "S3Uri": source_uri,
+                    "S3DataDistributionType": "FullyReplicated"
+                 }},
+                 "InputMode": "File",
+            },
             {
                 "ChannelName":     "train",
                 "DataSource":      {"S3DataSource": {"S3DataType": "S3Prefix", "S3Uri": "s3://edu-qlora-art/edu-lora-dataset/train.jsonl", "S3DataDistributionType": "FullyReplicated"}},
@@ -73,8 +77,7 @@ def submit_job(source_uri):
         CheckpointConfig={"S3Uri": f"s3://{BUCKET}/checkpoints/{JOB_NAME}/"},
         Environment={
             "HF_TOKEN":                    HF_TOKEN,
-            "SAGEMAKER_SUBMIT_DIRECTORY":  source_uri,  #now s3://bucket/source/job-name
-            "SAGEMAKER_PROGRAM":           "train.py",
+            "HUGGING_FACE_HUB_TOKEN":      HF_TOKEN,
         },
     )
 

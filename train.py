@@ -1,15 +1,17 @@
 """
 train.py
-------------
+--------
+QLoRA fine-tuning of Phi-3-mini-4k-instruct on education domain Q&A data.
+
 Usage:
     python train.py
 
 Requirements:
     pip install peft bitsandbytes trl
-    
 """
 
 import os
+import glob
 import torch
 from transformers import (
     AutoModelForCausalLM,
@@ -18,17 +20,16 @@ from transformers import (
     BitsAndBytesConfig,
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from trl import SFTTrainer
+from trl import SFTTrainer, SFTConfig
 from datasets import load_dataset
 
-# ---Quantization config---
+
+# ── Quantization config ────────────────────────────────────────────────────────
 def get_bnb_config():
-    # BitsAndBytes config enables QLoRA:
-    # load_in_4bit loads the base model in 4-bit precision,
-    # massively reducing VRAM usage so a 3.8B model fits on one A10G GPU.
-    # nf4 (NormalFloat4) is the quantization type — better than int4 for LLMs.
-    # double_quant quantizes the quantization constants themselves for extra savings.
-    # compute_dtype stays in bfloat16 for stable training arithmetic.
+    # load_in_4bit: loads base model in 4-bit precision, reducing VRAM usage.
+    # nf4: NormalFloat4 quantization — better than int4 for LLMs.
+    # double_quant: quantizes the quantization constants for extra savings.
+    # compute_dtype: stays in bfloat16 for stable training arithmetic.
     return BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_use_double_quant=True,
@@ -36,62 +37,58 @@ def get_bnb_config():
         bnb_4bit_compute_dtype=torch.bfloat16,
     )
 
-#---LoRA config---
+
+# ── LoRA config ────────────────────────────────────────────────────────────────
 def get_lora_config():
-    # LoRA config: LoRA is a parameter-efficient fine-tuning method that adds small trainable matrices to the model.
-    # r is the rank of the matrices, alpha is the scaling factor, and dropout is the dropout rate.
-    # target_modules are the layers to apply LoRA to.
-    # bias is set to none to avoid adding extra parameters.
-    # task_type is set to CAUSAL_LM for language modeling.
+    # LoRA injects small trainable matrices into attention layers.
+    # r=16: adapter rank — higher = more capacity, more VRAM.
+    # lora_alpha=32: scaling factor (conventionally 2x rank).
+    # target_modules: attention + MLP projection layers in Phi-3.
+    # lora_dropout: regularization to prevent overfitting on small datasets.
     return LoraConfig(
         r=16,
         lora_alpha=32,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        target_modules=[
+            "q_proj", "k_proj", "v_proj", "o_proj",
+            "gate_proj", "up_proj", "down_proj",
+        ],
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
     )
 
-#---Load model and Tokenizer---
-def load_model_and_tokenizer(model_id, bnb_config):
+
+# ── Model and tokenizer ────────────────────────────────────────────────────────
+def load_model_and_tokenizer(model_id, bnb_config, hf_token=""):
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
+        token=hf_token,
         quantization_config=bnb_config,
-        device_map="auto", # automatically places layers across available GPUs
-        trust_remote_code=True, # required for Phi-3 custom modeling code
-        torch_dtype=torch.bfloat16,
+        device_map="auto",
+        trust_remote_code=True,
+        dtype=torch.bfloat16,
     )
 
-    # prepare_model_for_kbit_training enables gradient checkpointing and 
-    # casts layer norms to float32 - both required for stable QLoRA training.
-
+    # prepare_model_for_kbit_training enables gradient checkpointing and
+    # casts layer norms to float32 — both required for stable QLoRA training.
     model = prepare_model_for_kbit_training(model)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_id, token=hf_token, trust_remote_code=True
+    )
 
-    # Phi-3 has no native pad token - uses EOS token for padding, so we set it here.
-    # padding_side="right" prevents attention mask warnings during training
+    # Phi-3 has no native pad token — use eos_token.
+    # padding_side="right" prevents attention mask warnings during training.
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
     return model, tokenizer
 
-# ---Training arguments---
-def get_training_args():
-    # TrainingArguments config: TrainingArguments is a class that contains all the hyperparameters for training.
-    # These hyperparameters are tuned for a single A10G GPU (24 GB VRAM)
-    # output_dir is the directory where the model checkpoints will be saved.
-    # per_device_train_batch_size is the batch size per GPU.
-    # gradient_accumulation_steps is the number of steps to accumulate gradients before updating the model.
-    # gradient_accumulation_steps=2 simulates a batch size of 8 (4 x 2)
-    # without storing 8 batches in VRAM simultaneously.
-    # cosine lr_swcheduler wamrs up then decays smoothly - better than linear for LLM.
-    # bf16=True uses bfloat16 precision; faster and more stable than fp16 on A10G.
-    # optim is the optimizer to use.
-    # group_by_length=True groups sequences of similar length together to reduce padding.
 
-    return TrainingArguments(
-        output_dir="output_dir",
+# ── Training arguments ─────────────────────────────────────────────────────────
+def get_training_args(output_dir):
+    return SFTConfig(
+        output_dir=output_dir,
         num_train_epochs=3,
         per_device_train_batch_size=4,
         gradient_accumulation_steps=2,
@@ -101,35 +98,61 @@ def get_training_args():
         lr_scheduler_type="cosine",
         logging_steps=10,
         save_strategy="epoch",
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         bf16=True,
         seed=42,
         optim="paged_adamw_32bit",
         group_by_length=True,
         gradient_checkpointing=True,
+        dataset_text_field="instruction",
+        packing=True,
     )
 
-#---Main---
+
+# ── Main ───────────────────────────────────────────────────────────────────────
 def main():
+    import sys
 
-    model_id = "meta-llama/Llama-3.2-1B-Instruct"
-    output_dir = os.environ["SM_MODEL_DIR"] # Sagemaker injects this path
+    print("=== MAIN STARTED ===", flush=True)
 
-    # SM_CHANNEL_<NAME> env vars point to the S3 data SageMaker downloaded
-    # into the container before training starts
-    train_data_path = os.environ["SM_CHANNEL_TRAIN"]
-    eval_data_path = os.environ["SM_CHANNEL_EVAL"]
+    model_id = "microsoft/Phi-3-mini-4k-instruct"
+    # model_id = "meta-llama/Llama-3.2-1B-Instruct"  # uncomment when access granted
 
-    bnb_config = get_bnb_config()
+    output_dir      = os.environ.get("SM_MODEL_DIR",     "/opt/ml/model")
+    train_data_path = os.path.join(
+        os.environ.get("SM_CHANNEL_TRAIN", "/opt/ml/input/data/train"),
+        "train.jsonl",
+    )
+    eval_data_path = os.path.join(
+        os.environ.get("SM_CHANNEL_EVAL", "/opt/ml/input/data/eval"),
+        "eval.jsonl",
+    )
+    hf_token = os.environ.get("HF_TOKEN", "")
+
+    print(f"HF_TOKEN set:   {bool(hf_token)}", flush=True)
+    print(f"Train path:     {train_data_path}", flush=True)
+    print(f"Eval path:      {eval_data_path}", flush=True)
+    print(f"Output dir:     {output_dir}", flush=True)
+
+    bnb_config  = get_bnb_config()
     lora_config = get_lora_config()
-    model, tokenizer = load_model_and_tokenizer(model_id, bnb_config)
-    model = get_peft_model(model, lora_config)
 
-    # Print trainable vs total parameters - good to log
+    try:
+        print("Loading model...", flush=True)
+        model, tokenizer = load_model_and_tokenizer(model_id, bnb_config, hf_token)
+        print("Model loaded!", flush=True)
+    except Exception as e:
+        print(f"MODEL LOAD FAILED: {e}", flush=True)
+        sys.exit(1)
+
+    # Apply LoRA adapters once — do NOT also pass peft_config to SFTTrainer.
+    model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
 
     train_dataset = load_dataset("json", data_files=train_data_path, split="train")
-    eval_dataset = load_dataset("json", data_files=eval_data_path, split="train")
+    eval_dataset  = load_dataset("json", data_files=eval_data_path,  split="train")
+    print(f"Train examples: {len(train_dataset)}", flush=True)
+    print(f"Eval examples:  {len(eval_dataset)}",  flush=True)
 
     training_args = get_training_args(output_dir)
 
@@ -138,22 +161,20 @@ def main():
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        tokenizer=tokenizer,
-        peft_config=lora_config,
-        max_seq_length=512,               # truncate longer examples to save VRAM
-        dataset_text_field="instruction", # the field SFTTrainer trains on
-        packing=True,                     # concatenates multiple short examples into single 512-token sequences
+        processing_class=tokenizer,
     )
 
+    print("Starting training...", flush=True)
     trainer.train()
+    print("Training complete!", flush=True)
 
-    # Save only the LoRA adapter - not the full model
-    # The Adapter is ~50 MB vs ~1.5 GB for the full model
-    # We merge at deployment time in a separate step.
+    # Save only the LoRA adapter (~50 MB vs ~8 GB for the full model).
+    # We merge with the base model at deployment time.
     adapter_path = os.path.join(output_dir, "lora_adapter")
     trainer.model.save_pretrained(adapter_path)
     tokenizer.save_pretrained(adapter_path)
-    print(f"Adapter saved to {adapter_path}")
+    print(f"Adapter saved to {adapter_path}", flush=True)
 
-    if __name__ == "__main__":
-        main()
+
+if __name__ == "__main__":
+    main()
