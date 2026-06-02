@@ -33,9 +33,9 @@ BUCKET     = "sagemaker-us-east-1-730335300762"
 DATA_BUCKET = "edu-qlora-art"
 DATA_PREFIX = "edu-lora-dataset"
 HF_TOKEN   = os.environ.get("HF_TOKEN", "")
-IMAGE_URI  = (
+INFERENCE_IMAGE_URI = (
     "763104351884.dkr.ecr.us-east-1.amazonaws.com/"
-    "huggingface-pytorch-training:2.8.0-transformers4.56.2-gpu-py312-cu129-ubuntu22.04"
+    "huggingface-pytorch-inference:2.3.0-transformers4.46.1-gpu-py311-cu121-ubuntu22.04"
 )
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -473,9 +473,10 @@ def deployed_endpoint(
     sm.create_model(
         ModelName=model_name,
         PrimaryContainer={
-            "Image":        IMAGE_URI,
+            "Image":        INFERENCE_IMAGE_URI,
             "ModelDataUrl": merged_s3,
             "Environment": {
+                "HF_TASK":                "text-generation",
                 "HF_TOKEN":               HF_TOKEN,
                 "HUGGING_FACE_HUB_TOKEN": HF_TOKEN,
             },
